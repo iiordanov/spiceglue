@@ -24,7 +24,8 @@
 #ifndef _GLUE_CLIPBOARD_H
 #define _GLUE_CLIPBOARD_H
 
-#include <spice-gtk/spice-util.h>
+#include "glue-spice-utl.h"
+#include <spice-util.h>
 #include <spice/vd_agent.h>
 
 /* Callback executed when the vdagent in the guest requests the 
@@ -44,6 +45,5 @@ gboolean clipboard_releaseByGuest(SpiceMainChannel *main, guint selection,
 void clipboard_got_from_guest(SpiceMainChannel *main, guint selection,
                                      guint type, const guchar *data, guint size,
                                      gpointer user_data);
-
 #endif /* _GLUE_CLIPBOARD_H */
 #endif

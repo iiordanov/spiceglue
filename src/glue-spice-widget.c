@@ -1394,6 +1394,8 @@ static void channel_new(SpiceSession *s, SpiceChannel *channel, gpointer data)
         }
 
 #ifdef USE_CLIPBOARD
+        SPICE_DEBUG("channel_new: Enabling clipboard, id %d ", get_display_id(display));
+
         g_signal_connect(channel, "main-clipboard-selection-request",
                      G_CALLBACK(clipboard_requestFromGuest), /*self*/ NULL);
 

@@ -28,11 +28,14 @@
 #include "glue-spice-widget.h"
 #include "glue-spice-widget-priv.h"
 #include "glue-clipboard.h"
+#include "glue-clipboard-client.h"
 
 gboolean enableClipboardToGuest = FALSE;
 gboolean enableClipboardToClient = FALSE;
 uint32_t *guestClipboard = NULL;
 uint32_t *hostClipboard = NULL;
+void (*clientClipboardCallback)(char *);
+
 /*  
  *   Clipboard sharing between client and guest, using spice client library
  *   and windows native API. No GTK or any other GUI framework.
@@ -46,7 +49,6 @@ uint32_t *hostClipboard = NULL;
 guint32 clipboardTypes [1] = {VD_AGENT_CLIPBOARD_UTF8_TEXT};
 int ntypes = 1;
 
-#define CB_SIZE 512 * 1024
 #define CB_OWNER_NONE 0
 #define CB_OWNER_GUEST 1
 #define CB_OWNER_HOST 2
@@ -67,7 +69,6 @@ typedef struct
     guint type;
 } CBData;
 
-/* Allocates new memory for current_data, which will need to be freed later*/
 void
 push_clipboard_data (const guchar *data, guint size)
 {
@@ -281,7 +282,7 @@ void clipboard_got_from_guest(SpiceMainChannel *main, guint selection,
                                      guint type, const guchar *data, guint size,
                                      gpointer user_data)
 {
-    SPICE_DEBUG("CB: clipboard_got_data  type : %d ", type);
+    SPICE_DEBUG("CB: clipboard_got_from_guest type : %d ", type);
     if (!enableClipboardToClient) {
         SPICE_DEBUG("CB: enableClipboardToClient set to false. Doing nothing.");
         return;
@@ -296,6 +297,10 @@ void clipboard_got_from_guest(SpiceMainChannel *main, guint selection,
         push_clipboard_data (data, size + 1);
     } else {
         g_warning("CB: Ignoring clipboard of unexpected type %d from guest", type);
+    }
+
+    if (clientClipboardCallback != NULL) {
+        clientClipboardCallback(guestClipboard);
     }
 }
 
@@ -321,7 +326,7 @@ gboolean clipboard_grabByGuest(SpiceMainChannel *main, guint selection,
         if (types[i] == VD_AGENT_CLIPBOARD_UTF8_TEXT){
         
             SPICE_DEBUG("CB: IT IS UTF8");
-
+            spice_main_channel_clipboard_selection_request(main, selection, types[i]);
             clipboardOwner = CB_OWNER_GUEST;
         }
     }
@@ -339,7 +344,8 @@ gboolean clipboard_releaseByGuest(SpiceMainChannel *main, guint selection,
 
 gboolean SpiceGlibGlue_InitClipboard(
         int16_t enableClipboardToGuestP, int16_t enableClipboardToClientP,
-        uint32_t *guestClipboardP, uint32_t *hostClipboardP)
+        uint32_t *guestClipboardP, uint32_t *hostClipboardP,
+        void (*clientClipboardCallbackP)(char *))
 {
     SPICE_DEBUG("CB SpiceGlibGlue_InitClipboard (%d, %d)", 
             enableClipboardToGuestP, enableClipboardToClientP);
@@ -348,8 +354,40 @@ gboolean SpiceGlibGlue_InitClipboard(
 
     guestClipboard = guestClipboardP;
     hostClipboard = hostClipboardP;
+    clientClipboardCallback = clientClipboardCallbackP;
     SPICE_DEBUG("CB: guestClipboard 0x%x\n", guestClipboard);
     SPICE_DEBUG("CB: hostClipboard 0x%x\n", hostClipboard);
     
     return FALSE;    
+}
+
+void spice_clipboard_selection_grab(SpiceMainChannel *channel, char *text, int size) {
+    int writeSize = MIN(size, CB_SIZE - 1);
+    SPICE_DEBUG("CB: spice_clipboard_selection_grab text: %s", text);
+    SPICE_DEBUG("CB: spice_clipboard_selection_grab writeSize: %d", writeSize);
+    snprintf((char *) hostClipboard, writeSize+1, "%s\0", text);
+    SPICE_DEBUG("CB: spice_clipboard_selection_grab hostClipboard: %s", hostClipboard);
+    guint32 clipboard_types[] = { VD_AGENT_CLIPBOARD_UTF8_TEXT };
+    spice_main_channel_clipboard_selection_grab(
+            channel,
+            VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD,
+            clipboard_types,
+            1
+    );
+}
+
+gboolean SpiceGlibGlue_ClientCutText(char *hostClipboardContents, int size) {
+    if (hostClipboard == NULL) {
+        return FALSE;
+    }
+    SpiceDisplay *display;
+    display = global_display();
+    SpiceDisplayPrivate *d;
+    d = SPICE_DISPLAY_GET_PRIVATE(display);
+    if (d == NULL || d->main == NULL) {
+        return FALSE;
+    }
+
+    spice_clipboard_selection_grab(d->main, hostClipboardContents, size);
+    return TRUE;
 }
