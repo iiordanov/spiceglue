@@ -43,6 +43,7 @@ void spice_session_setup_from_vv(VirtViewerFile *file, SpiceConnection *session,
 SpiceConnection *spice_connection_new(void);
 void spice_connection_connect(SpiceConnection *conn);
 void spice_connection_disconnect(SpiceConnection *conn);
+void spice_connection_auth_failed(SpiceConnection *conn);
 SpiceDisplay *spice_connection_get_display(SpiceConnection *conn);
 int spice_connection_get_num_channels(SpiceConnection *conn);
 void spice_connection_power_event_request(SpiceConnection *conn, int powerEvent);
@@ -52,5 +53,7 @@ void spice_connection_set_buffer_update_callback(SpiceConnection *conn,
              void (*buffer_update_callback)(int, int, int, int));
 void spice_connection_set_disconnect_callback(SpiceConnection *conn,
              void (*disconnect_callback)(void));
+void spice_connection_set_auth_failed_callback(SpiceConnection *conn,
+             void (*auth_failed_callback)(void));
 
 #endif /* _ANDROID_SPICY_H */

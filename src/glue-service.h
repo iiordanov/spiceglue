@@ -39,4 +39,5 @@ int32_t SpiceGlibGlue_SpiceKeyEvent(int16_t isDown, int32_t hardware_keycode);
 void SpiceGlibGlue_SetLogCallback(void (*log_callback)(int8_t *));
 void SpiceGlibGlue_SetBufferResizeCallback(void (*buffer_resize_callback)(int, int, int));
 void SpiceGlibGlue_SetBufferUpdateCallback(void (*buffer_update_callback)(int, int, int, int));
-void SpiceGlibGlue_SetBufferDisconnectCallback(void (*disconnect_callback)(void));
+void SpiceGlibGlue_SetDisconnectCallback(void (*disconnect_callback)(void));
+void SpiceGlibGlue_SetAuthFailedCallback(void (*auth_failed_callback)(void));

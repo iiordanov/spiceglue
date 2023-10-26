@@ -376,8 +376,14 @@ void SpiceGlibGlue_SetBufferUpdateCallback(void (*buffer_update_callback)(int, i
         spice_connection_set_buffer_update_callback(mainconn, buffer_update_callback);
 }
 
-void SpiceGlibGlue_SetBufferDisconnectCallback(void (*disconnect_callback)(void)) {
-    SPICE_DEBUG("SpiceGlibGlue_SetBufferDisconnectCallback");
+void SpiceGlibGlue_SetDisconnectCallback(void (*disconnect_callback)(void)) {
+    SPICE_DEBUG("SpiceGlibGlue_SetDisconnectCallback");
     if (mainconn != NULL)
         spice_connection_set_disconnect_callback(mainconn, disconnect_callback);
+}
+
+void SpiceGlibGlue_SetAuthFailedCallback(void (*auth_failed_callback)(void)) {
+    SPICE_DEBUG("SpiceGlibGlue_SetAuthFailedCallback");
+    if (mainconn != NULL)
+        spice_connection_set_auth_failed_callback(mainconn, auth_failed_callback);
 }

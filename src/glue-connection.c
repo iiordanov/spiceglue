@@ -34,6 +34,7 @@ struct _SpiceConnection {
     void (*buffer_resize_callback)(int, int, int);
     void (*buffer_update_callback)(int, int, int, int);
     void (*disconnect_callback)(void);
+    void (*auth_failed_callback)(void);
 };
 
 G_DEFINE_TYPE(SpiceConnection, spice_connection, G_TYPE_OBJECT);
@@ -105,7 +106,7 @@ static void channel_event(SpiceChannel *channel, SpiceChannelEvent event,
         break;
     case SPICE_CHANNEL_ERROR_AUTH:
         g_warning("%s channel: auth failure (wrong password?)", channel_name);
-        spice_connection_disconnect(conn);
+        spice_connection_auth_failed(conn);
         break;
     default:
         /* TODO: more sophisticated error handling */
@@ -209,6 +210,13 @@ void spice_connection_disconnect(SpiceConnection *conn)
     spice_session_disconnect(conn->session);
     if (conn->disconnect_callback != NULL)
         conn->disconnect_callback();
+}
+
+void spice_connection_auth_failed(SpiceConnection *conn)
+{
+    spice_connection_disconnect(conn);
+    if (conn->auth_failed_callback != NULL)
+        conn->auth_failed_callback();
 }
 
 /* Saver config parameters to session Object*/
@@ -375,3 +383,10 @@ void spice_connection_set_disconnect_callback(SpiceConnection *conn,
     SPICE_DEBUG("spice_connection_set_disconnect_callback");
     conn->disconnect_callback = disconnect_callback;
 }
+
+void spice_connection_set_auth_failed_callback(SpiceConnection *conn,
+             void (*auth_failed_callback)(void)) {
+    SPICE_DEBUG("spice_connection_set_auth_failed_callback");
+    conn->auth_failed_callback = auth_failed_callback;
+}
+
