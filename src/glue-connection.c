@@ -201,20 +201,25 @@ void spice_connection_connect(SpiceConnection *conn)
     spice_session_connect(conn->session);
 }
 
-void spice_connection_disconnect(SpiceConnection *conn)
+static void spice_connection_disconnect_common(SpiceConnection *conn)
 {
     if (conn == NULL || conn->disconnecting)
         return;
     conn->disconnecting = TRUE;
     SPICE_DEBUG("Disconnect Spice connection %p", conn);
     spice_session_disconnect(conn->session);
+}
+
+void spice_connection_disconnect(SpiceConnection *conn)
+{
+    spice_connection_disconnect_common(conn);
     if (conn->disconnect_callback != NULL)
         conn->disconnect_callback();
 }
 
 void spice_connection_auth_failed(SpiceConnection *conn)
 {
-    spice_connection_disconnect(conn);
+    spice_connection_disconnect_common(conn);
     if (conn->auth_failed_callback != NULL)
         conn->auth_failed_callback();
 }
