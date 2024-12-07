@@ -213,7 +213,7 @@ static void spice_connection_disconnect_common(SpiceConnection *conn)
 void spice_connection_disconnect(SpiceConnection *conn)
 {
     spice_connection_disconnect_common(conn);
-    if (conn->disconnect_callback != NULL)
+    if (conn != NULL && conn->disconnect_callback != NULL)
         conn->disconnect_callback();
 }
 
