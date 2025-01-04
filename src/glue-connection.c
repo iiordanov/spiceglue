@@ -35,6 +35,7 @@ struct _SpiceConnection {
     void (*buffer_update_callback)(int, int, int, int);
     void (*disconnect_callback)(void);
     void (*auth_failed_callback)(void);
+    void (*cursor_shape_updated_callback)(int width, int height, int x, int y, int *pixels);
 };
 
 G_DEFINE_TYPE(SpiceConnection, spice_connection, G_TYPE_OBJECT);
@@ -128,9 +129,7 @@ static void channel_new(SpiceSession *s, SpiceChannel *channel, gpointer data)
 
     if (SPICE_IS_MAIN_CHANNEL(channel)) {
         conn->main = SPICE_MAIN_CHANNEL(channel);
-    }
-
-    else if (SPICE_IS_DISPLAY_CHANNEL(channel)) {
+    } else if (SPICE_IS_DISPLAY_CHANNEL(channel)) {
         if (id > 0) {
             g_warning("Only one display channel supported!");
             return;
@@ -140,13 +139,10 @@ static void channel_new(SpiceSession *s, SpiceChannel *channel, gpointer data)
         conn->display = spice_display_new(conn->session, id);
         set_buffer_resize_callback(conn->display, conn->buffer_resize_callback);
         set_buffer_update_callback(conn->display, conn->buffer_update_callback);
-    }
-
-    else if (conn->enable_sound && SPICE_IS_PLAYBACK_CHANNEL(channel)) {
+        set_cursor_shape_update_callback(conn->display, conn->cursor_shape_updated_callback);
+    } else if (conn->enable_sound && SPICE_IS_PLAYBACK_CHANNEL(channel)) {
         conn->audio = spice_audio_get(s, NULL);
-    }
-
-    else if (!SPICE_IS_INPUTS_CHANNEL(channel) &&
+    } else if (!SPICE_IS_INPUTS_CHANNEL(channel) &&
              !SPICE_IS_PORT_CHANNEL(channel)) {
         SPICE_DEBUG("Unsupported channel type %s", channel_name);
         return;
@@ -395,3 +391,9 @@ void spice_connection_set_auth_failed_callback(SpiceConnection *conn,
     conn->auth_failed_callback = auth_failed_callback;
 }
 
+void spice_connection_set_cursor_shape_updated_callback(SpiceConnection *conn,
+    void (*cursor_shape_updated_callback)(int width, int height, int x, int y, int *pixels)
+) {
+    SPICE_DEBUG("spice_connection_set_cursor_shape_updated_callback");
+    conn->cursor_shape_updated_callback = cursor_shape_updated_callback;
+}

@@ -124,6 +124,7 @@ struct _SpiceDisplayPrivate {
 
     void (*buffer_resize_callback)(int, int, int);
     void (*buffer_update_callback)(int, int, int, int);
+    void (*cursor_shape_updated_callback)(int width, int height, int x, int y, int *pixels);
 };
 
 G_END_DECLS

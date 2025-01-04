@@ -55,5 +55,6 @@ void spice_connection_set_disconnect_callback(SpiceConnection *conn,
              void (*disconnect_callback)(void));
 void spice_connection_set_auth_failed_callback(SpiceConnection *conn,
              void (*auth_failed_callback)(void));
-
+void spice_connection_set_cursor_shape_updated_callback(SpiceConnection *conn,
+             void (*cursor_shape_updated_callback)(int width, int height, int x, int y, int *pixels));
 #endif /* _ANDROID_SPICY_H */

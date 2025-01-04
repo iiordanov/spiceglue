@@ -41,3 +41,6 @@ void SpiceGlibGlue_SetBufferResizeCallback(void (*buffer_resize_callback)(int, i
 void SpiceGlibGlue_SetBufferUpdateCallback(void (*buffer_update_callback)(int, int, int, int));
 void SpiceGlibGlue_SetDisconnectCallback(void (*disconnect_callback)(void));
 void SpiceGlibGlue_SetAuthFailedCallback(void (*auth_failed_callback)(void));
+void SpiceGlibGlue_SetCursorShapeUpdatedCallback(
+    void (*cursor_shape_updated_callback)(int width, int height, int x, int y, int *pixels)
+);

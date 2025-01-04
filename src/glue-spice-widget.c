@@ -1175,8 +1175,12 @@ static void cursor_set(SpiceCursorChannel *channel,
 
     if (rgba != NULL) {
         cursor= monoglue_cursor_new_from_data(width, height, hot_x, hot_y, rgba);
-    } else
+        if(d->cursor_shape_updated_callback) {
+            d->cursor_shape_updated_callback(width, height, hot_x, hot_y, rgba);
+        }
+    } else {
         g_warn_if_reached();
+    }
 
     if (d->show_cursor) {
         monoglue_cursor_finalize(d->show_cursor);
@@ -1184,7 +1188,7 @@ static void cursor_set(SpiceCursorChannel *channel,
         if (d->mouse_mode == SPICE_MOUSE_MODE_SERVER) {
             SPICE_DEBUG("%s pointer copying cursor image to show_cursor:", __FUNCTION__);
             /* keep a hidden cursor, will be shown in cursor_move() */
-            d->show_cursor= monoglue_cursor_new_from_data(width, height, hot_x, hot_y, rgba);
+            d->show_cursor = monoglue_cursor_new_from_data(width, height, hot_x, hot_y, rgba);
             goto end;
         }
     }
@@ -1196,8 +1200,7 @@ static void cursor_set(SpiceCursorChannel *channel,
         cursor->width, cursor->height, cursor->rgba[0]);
 
     (d->idCursor)++;
-
- end:
+end:
     g_mutex_unlock(&d->cursor_lock);
 }
 
@@ -1441,8 +1444,9 @@ static void channel_new(SpiceSession *s, SpiceChannel *channel, gpointer data)
         return;
     }
 
+    SPICE_DEBUG(" ***** channel_new");
     if (SPICE_IS_CURSOR_CHANNEL(channel)) {
-        //SPICE_DEBUG(" ***** channel_new: ES CURSOR_CHANEL del display %d ", get_display_id(display));
+        SPICE_DEBUG(" ***** channel_new: ES CURSOR_CHANEL del display %d ", get_display_id(display));
 
         if (id != d->channel_id)
             return;
@@ -1752,4 +1756,12 @@ void set_buffer_update_callback(SpiceDisplay *display, void (*buffer_update_call
     SpiceDisplayPrivate *d;
     d = SPICE_DISPLAY_GET_PRIVATE(display);
     d->buffer_update_callback = buffer_update_callback;
+}
+
+void set_cursor_shape_update_callback(
+    SpiceDisplay *display, void (*cursor_shape_updated_callback)(int width, int height, int x, int y, int *pixels)
+) {
+    SpiceDisplayPrivate *d;
+    d = SPICE_DISPLAY_GET_PRIVATE(display);
+    d->cursor_shape_updated_callback = cursor_shape_updated_callback;
 }

@@ -83,6 +83,9 @@ int32_t spice_display_key_event(SpiceDisplay *display, int16_t isDown, int32_t h
 
 void set_buffer_resize_callback(SpiceDisplay *display, void (*buffer_resize_callback)(int, int, int));
 void set_buffer_update_callback(SpiceDisplay *display, void (*buffer_update_callback)(int, int, int, int));
+void set_cursor_shape_update_callback(
+    SpiceDisplay *display, void (*cursor_shape_updated_callback)(int width, int height, int x, int y, int *pixels)
+);
 
 int16_t SpiceGlibGlueButtonEvent(int32_t eventX, int32_t eventY,
                                  int16_t buttonId, int16_t buttonState, int16_t isDown);
