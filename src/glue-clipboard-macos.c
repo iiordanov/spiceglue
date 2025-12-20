@@ -86,7 +86,6 @@ push_clipboard_data (const guchar *data, guint size)
   pendingGuestData = 1;
 
   g_mutex_unlock (&data_mutex);
-  SPICE_DEBUG("CB: guestClipboard contains \"%s\"\n", guestClipboard); 
   SPICE_DEBUG("CB: data_mutex UNlocked in push.\n");
 }
 
@@ -242,10 +241,6 @@ gboolean clipboard_requestFromGuest(SpiceMainChannel *main, guint selection,
     //TODO check values as spice-gtk-session.
     gchar *data = (gchar *) hostClipboard;
     SPICE_DEBUG("CB: hostClipboard 0x%x\n", hostClipboard);
-
-    if (hostClipboard != NULL) {
-        SPICE_DEBUG("CB: hostClipboard contains %s\n", hostClipboard);
-    }
 
     if (data == NULL ) {
         SPICE_DEBUG("CB: No supported Clipboard format available\n");
