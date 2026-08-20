@@ -19,6 +19,9 @@
 #include "glue-spice-widget.h"
 #include "virt-viewer-file.h"
 
+
+/* Both Connect calls block until a running SpiceGlibGlue_MainLoop dispatches them, so the
+ * loop must be running on another thread before either is called. */
 SpiceDisplay* global_display(void);
 int16_t SpiceGlibGlue_Connect(char* host,
 			      char* port, char* tls_port, char* ws_port,

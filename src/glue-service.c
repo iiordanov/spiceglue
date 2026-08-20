@@ -183,10 +183,93 @@ SpiceDisplay* global_display() {
     return mainconn != NULL ? spice_connection_get_display(mainconn) : NULL;
 }
 
+#define GLUE_MAIN_LOOP_START_TIMEOUT_US (10 * G_USEC_PER_SEC)
+
+static GMutex glue_main_mutex;
+static GCond glue_main_cond;
+static GMainLoop *glue_mainloop = NULL;
+static GThread *glue_main_thread = NULL;
+
+struct glue_main_call {
+    int16_t (*function)(gpointer);
+    gpointer data;
+    int16_t result;
+    gboolean finished;
+};
+
+static gboolean glue_run_main_call(gpointer data)
+{
+    struct glue_main_call *call = data;
+    int16_t result = call->function(call->data);
+
+    g_mutex_lock(&glue_main_mutex);
+    call->result = result;
+    call->finished = TRUE;
+    g_cond_broadcast(&glue_main_cond);
+    g_mutex_unlock(&glue_main_mutex);
+    return G_SOURCE_REMOVE;
+}
+
+/* This function takes care of spice-gtk is not being thread safe. It allows us to
+ * run calls on the thread running the main loop in a blocking manner. */
+static int16_t glue_call_on_main_loop(int16_t (*function)(gpointer), gpointer data)
+{
+    struct glue_main_call call = { function, data, -1, FALSE };
+    gint64 deadline;
+
+    if (g_main_context_is_owner(g_main_context_default())) {
+        return function(data);
+    }
+
+    g_mutex_lock(&glue_main_mutex);
+    if (glue_main_thread == g_thread_self()) {
+        g_mutex_unlock(&glue_main_mutex);
+        return function(data);
+    }
+    deadline = g_get_monotonic_time() + GLUE_MAIN_LOOP_START_TIMEOUT_US;
+    while (glue_mainloop == NULL) {
+        if (!g_cond_wait_until(&glue_main_cond, &glue_main_mutex, deadline)) {
+            g_mutex_unlock(&glue_main_mutex);
+            g_critical("SpiceGlibGlue_MainLoop() is not running, cannot dispatch %p", function);
+            return -1;
+        }
+    }
+    g_mutex_unlock(&glue_main_mutex);
+
+    g_timeout_add_full(G_PRIORITY_HIGH, 0, glue_run_main_call, &call, NULL);
+
+    /* Stays unbounded: the source holds a pointer to `call` on this frame. */
+    g_mutex_lock(&glue_main_mutex);
+    while (!call.finished) {
+        g_cond_wait(&glue_main_cond, &glue_main_mutex);
+    }
+    g_mutex_unlock(&glue_main_mutex);
+    return call.result;
+}
+
 void SpiceGlibGlue_MainLoop(void)
 {
-    GMainLoop *mainloop = g_main_loop_new(NULL, FALSE);
-    g_main_loop_run(mainloop);
+    GMainLoop *mainloop;
+
+    g_mutex_lock(&glue_main_mutex);
+    if (glue_mainloop != NULL) {
+        g_mutex_unlock(&glue_main_mutex);
+        g_critical("SpiceGlibGlue_MainLoop() called while already running");
+        return;
+    }
+    glue_main_thread = g_thread_self();
+    glue_mainloop = g_main_loop_new(NULL, FALSE);
+    g_cond_broadcast(&glue_main_cond);
+    g_mutex_unlock(&glue_main_mutex);
+
+    g_main_loop_run(glue_mainloop);
+
+    g_mutex_lock(&glue_main_mutex);
+    mainloop = glue_mainloop;
+    glue_mainloop = NULL;
+    glue_main_thread = NULL;
+    g_mutex_unlock(&glue_main_mutex);
+
     g_main_loop_unref(mainloop);
 #if defined(PRINTING) || defined(SSO)
     flexvdi_cleanup();
@@ -208,21 +291,28 @@ void SpiceGlibGlue_Disconnect(void)
                        NULL, NULL);
 }
 
-int16_t SpiceGlibGlue_Connect(char* host,
-			      char* port, char* tls_port, char* ws_port,
-			      char* password,
-			      char* ca_file, char* cert_subj,
-			      int32_t enable_sound)
+struct glue_connect_args {
+    char *host;
+    char *port;
+    char *tls_port;
+    char *ws_port;
+    char *password;
+    char *ca_file;
+    char *cert_subj;
+    int32_t enable_sound;
+};
+
+static int16_t glue_connect_on_main_loop(gpointer data)
 {
-    int result = 0;
+    struct glue_connect_args *args = data;
 
     SPICE_DEBUG("SpiceClientConnect session_setup");
 
     mainconn = spice_connection_new();
-    spice_connection_setup(mainconn, host,
-			port, tls_port, ws_port,
-			password,
-			ca_file, cert_subj, enable_sound);
+    spice_connection_setup(mainconn, args->host,
+			args->port, args->tls_port, args->ws_port,
+			args->password,
+			args->ca_file, args->cert_subj, args->enable_sound);
 
 #if defined(PRINTING) || defined(SSO)
     flexvdi_port_register_session(mainconn->session);
@@ -239,29 +329,53 @@ int16_t SpiceGlibGlue_Connect(char* host,
 #endif
     SPICE_DEBUG("SpiceClientConnect exit");
 
-    return result;
+    return 0;
 }
 
-int16_t SpiceGlibGlue_ConnectWithVv(const gchar *vv_file_name, const gboolean sound)
+int16_t SpiceGlibGlue_Connect(char* host,
+			      char* port, char* tls_port, char* ws_port,
+			      char* password,
+			      char* ca_file, char* cert_subj,
+			      int32_t enable_sound)
 {
+    struct glue_connect_args args = { host, port, tls_port, ws_port,
+                                      password, ca_file, cert_subj, enable_sound };
+    return glue_call_on_main_loop(glue_connect_on_main_loop, &args);
+}
+
+struct glue_connect_vv_args {
+    const gchar *vv_file_name;
+    gboolean sound;
+};
+
+static int16_t glue_connect_vv_on_main_loop(gpointer data)
+{
+    struct glue_connect_vv_args *args = data;
     GError *error = NULL;
     VirtViewerFile *vv_file = NULL;
     int result = -1;
 
     SPICE_DEBUG("SpiceGlibGlue_ConnectWithVv");
-    vv_file = virt_viewer_file_new(vv_file_name, &error);
+    vv_file = virt_viewer_file_new(args->vv_file_name, &error);
 
     if (!error) {
         mainconn = spice_connection_new();
-        spice_session_setup_from_vv(vv_file, mainconn, sound);
+        spice_session_setup_from_vv(vv_file, mainconn, args->sound);
         spice_connection_connect(mainconn);
         result = 0;
     } else {
         SPICE_DEBUG("Unable to parse console file: %s\n", error->message);
+        g_error_free(error);
     }
     if (vv_file != NULL)
         g_object_unref(vv_file);
     return result;
+}
+
+int16_t SpiceGlibGlue_ConnectWithVv(const gchar *vv_file_name, const gboolean sound)
+{
+    struct glue_connect_vv_args args = { vv_file_name, sound };
+    return glue_call_on_main_loop(glue_connect_vv_on_main_loop, &args);
 }
 
 int16_t SpiceGlibGlue_isConnected() {
