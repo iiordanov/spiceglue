@@ -20,6 +20,9 @@
 #include "virt-viewer-file.h"
 #include "glue-connection.h"
 
+
+/* Both Connect calls block until a running SpiceGlibGlue_MainLoop dispatches them, so the
+ * loop must be running on another thread before either is called. */
 SpiceDisplay* global_display(void);
 #ifdef USBREDIR
 SpiceConnection* global_connection(void);
@@ -33,6 +36,11 @@ int16_t SpiceGlibGlue_ConnectWithVv (const gchar *vv_file_name, const gboolean s
 void SpiceGlibGlue_Disconnect(void);
 void SpiceGlibGlue_InitializeLogging(int32_t verbosityLevel);
 void SpiceGlibGlue_MainLoop(void);
+
+/* Runs `function` on the thread owning the glue main loop and waits for it. Every call into
+ * spice-gtk must go through this. Returns the function's own result, or -1 if the main loop
+ * did not come up and the call was never made. */
+int16_t glue_call_on_main_loop(int16_t (*function)(gpointer), gpointer data);
 void SpiceGlibGlueSetDisplayBuffer(uint32_t *display_buffer,
 				   int32_t width, int32_t height);
 int16_t SpiceGlibGlueIsDisplayBufferUpdated(int32_t width, int32_t height);

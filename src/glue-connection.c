@@ -18,6 +18,9 @@
  */
 
 #include <sys/stat.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 #include <spice-client.h>
 #include "glue-connection.h"
 #include "virt-viewer-file.h"
@@ -164,6 +167,24 @@ static void channel_new(SpiceSession *s, SpiceChannel *channel, gpointer data)
         set_cursor_shape_update_callback(conn->display, conn->cursor_shape_updated_callback);
     } else if (conn->enable_sound && SPICE_IS_PLAYBACK_CHANNEL(channel)) {
         conn->audio = spice_audio_get(s, NULL);
+#ifdef USBREDIR
+    } else if (SPICE_IS_USBREDIR_CHANNEL(channel)) {
+        SPICE_DEBUG("USB redirection channel detected");
+#if defined(__APPLE__) && TARGET_OS_MACCATALYST
+        {
+            GError *usb_err = NULL;
+            SpiceUsbDeviceManager *usb_mgr = spice_usb_device_manager_get(s, &usb_err);
+            if (usb_mgr != NULL && usb_err == NULL) {
+                g_object_set(usb_mgr,
+                             "auto-connect", FALSE,
+                             "auto-connect-filter", "-1,-1,-1,-1,0",
+                             NULL);
+                g_message("macCatalyst: Disabled USB auto-connect on channel-new");
+            }
+            if (usb_err != NULL) g_error_free(usb_err);
+        }
+#endif
+#endif
     } else if (!SPICE_IS_INPUTS_CHANNEL(channel) &&
              !SPICE_IS_PORT_CHANNEL(channel)) {
         SPICE_DEBUG("Unsupported channel type %s", channel_name);

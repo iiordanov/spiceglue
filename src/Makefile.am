@@ -3,6 +3,11 @@ AM_LDFLAGS = -no-undefined -lxml2
 
 lib_LTLIBRARIES=libspiceglue.la
 libspiceglue_la_LIBADD=$(GLIB_LIBS) $(SPICEGLIB_LIBS)
+
+# Add macCatalyst frameworks for IOKit USB support
+if WITH_CLIPBOARD_MACOS
+libspiceglue_la_LDFLAGS = -framework CoreFoundation -framework IOKit
+endif
 libspiceglue_la_SOURCES=glue-spice-widget.c glue-service.c glue-connection.c virt-viewer-file.c virt-viewer-util.c glue-spice-util.c
 
 if WITH_CLIPBOARD_WIN32

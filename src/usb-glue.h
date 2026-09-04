@@ -110,5 +110,28 @@ void SpiceGlibGlue_GetUsbErrMsg(char* errMsg);
 void SpiceGlibGlue_InitWindowsEvents();
 void SpiceGlibGlue_FinalizeWindowsEvents();
 
+/* macCatalyst IOKit-based USB support using io_service_t */
+#if defined(__APPLE__) && TARGET_OS_MACCATALYST
+/*
+ * Ask for a USB device, named by its IOKit io_service_t, to be redirected. Returns 1 if the
+ * request was made. The redirect completes later; read the outcome with
+ * SpiceGlibGlue_GetUsbRedirectionState.
+ */
+int32_t SpiceGlibGlue_AttachUsbDeviceByService(uint32_t io_service);
+
+/* Whether the device is redirected, as reported by the redirect's completion. `errMsg`
+ * receives the reason it is not, and is never written beyond `errMsgSize`. Does not enter
+ * the glue main loop. */
+int32_t SpiceGlibGlue_GetUsbRedirectionState(uint32_t io_service, char *errMsg,
+                                            int32_t errMsgSize);
+
+
+/*
+ * Ask for a redirected USB device, named by its IOKit io_service_t, to be given back.
+ * Returns 1 if the request was made.
+ */
+int32_t SpiceGlibGlue_DetachUsbDeviceByService(uint32_t io_service);
+#endif
+
 #endif /* _GLUE_USB_H */
 #endif
