@@ -36,9 +36,21 @@ struct _SpiceConnection {
     void (*disconnect_callback)(void);
     void (*auth_failed_callback)(void);
     void (*cursor_shape_updated_callback)(int width, int height, int x, int y, int *pixels);
+#ifdef USBREDIR
+    GHashTable       *usbDevices;  /* Maps file descriptors (int) to SpiceUsbDevice pointers */
+#endif
 };
 
 G_DEFINE_TYPE(SpiceConnection, spice_connection, G_TYPE_OBJECT);
+
+#ifdef USBREDIR
+static void free_usb_device(gpointer device)
+{
+    if (device != NULL) {
+        g_boxed_free(SPICE_TYPE_USB_DEVICE, device);
+    }
+}
+#endif
 
 static void spice_connection_dispose(GObject * obj);
 
@@ -58,6 +70,10 @@ static void spice_connection_init(SpiceConnection * conn) {
                      G_CALLBACK(channel_new), conn);
     g_signal_connect(conn->session, "channel-destroy",
                      G_CALLBACK(channel_destroy), conn);
+#ifdef USBREDIR
+    conn->usbDevices = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL,
+                                             free_usb_device);
+#endif
     g_object_ref(conn);
 }
 
@@ -65,6 +81,12 @@ static void spice_connection_dispose(GObject * obj) {
     SpiceConnection * conn = SPICE_CONNECTION(obj);
     SPICE_DEBUG("Disposing connection %p", conn);
     g_warn_if_fail(conn->channels > 0);
+#ifdef USBREDIR
+    if (conn->usbDevices != NULL) {
+        g_hash_table_destroy(conn->usbDevices);
+        conn->usbDevices = NULL;
+    }
+#endif
     g_clear_object(&conn->session);
     g_clear_object(&conn->display);
     G_OBJECT_CLASS(spice_connection_parent_class)->dispose(obj);
@@ -418,5 +440,10 @@ void spice_connection_set_cursor_shape_updated_callback(SpiceConnection *conn,
 SpiceSession *spice_connection_get_session(SpiceConnection *conn)
 {
     return conn->session;
+}
+
+GHashTable *spice_connection_get_usb_devices(SpiceConnection *conn)
+{
+    return conn->usbDevices;
 }
 #endif

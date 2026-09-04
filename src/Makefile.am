@@ -15,6 +15,7 @@ endif
 
 if WITH_USBREDIR
 libspiceglue_la_SOURCES+= usb-device-widget.c usb-device-widget.h usb-glue.c usb-glue.h
+libspiceglue_la_LIBADD += -lusb-1.0
 endif
 
 if WITH_PRINTING

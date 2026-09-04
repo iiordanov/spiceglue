@@ -59,5 +59,6 @@ void spice_connection_set_cursor_shape_updated_callback(SpiceConnection *conn,
              void (*cursor_shape_updated_callback)(int width, int height, int x, int y, int *pixels));
 #ifdef USBREDIR
 SpiceSession *spice_connection_get_session(SpiceConnection *conn);
+GHashTable *spice_connection_get_usb_devices(SpiceConnection *conn);
 #endif
 #endif /* _ANDROID_SPICY_H */

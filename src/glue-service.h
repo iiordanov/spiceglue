@@ -18,8 +18,12 @@
 
 #include "glue-spice-widget.h"
 #include "virt-viewer-file.h"
+#include "glue-connection.h"
 
 SpiceDisplay* global_display(void);
+#ifdef USBREDIR
+SpiceConnection* global_connection(void);
+#endif
 int16_t SpiceGlibGlue_Connect(char* host,
 			      char* port, char* tls_port, char* ws_port,
 			      char* password,

@@ -19,9 +19,13 @@
 #include <string.h>
 
 #include "glue-service.h"
+#include "glue-connection.h"
 #include "glib.h"
 #include "usb-glue.h"
 #include "usb-device-widget.h"
+#include "spice-client.h"
+#include "usb-device-manager.h"
+
 #ifdef USBREDIR
 
 #ifdef G_OS_WIN32
@@ -131,8 +135,10 @@ void SpiceGlibGlue_FinalizeWindowsEvents() {
 
 void usb_glue_register_session(SpiceSession* session) {
 
+    g_clear_object(&usbWidget);
+
     usbWidget = g_object_new(SPICE_TYPE_USB_DEVICE_WIDGET,
-            "session", session, 
+            "session", session,
             NULL);
 }
 
@@ -165,8 +171,8 @@ SpiceUsbDevice* SpiceGlibGlue_GetNextUsbDevice(char* devName, char* devId,
         return (void *)NULL;
     } else {
         UsbDeviceInfo *dev = device->data;
-        strncpy(devName, dev->name, MAX_USB_DEVICE_NAME_SIZE);
-        strncpy(devId, dev->id, MAX_USB_DEVICE_ID_SIZE);
+        g_strlcpy(devName, dev->name, MAX_USB_DEVICE_NAME_SIZE);
+        g_strlcpy(devId, dev->id, MAX_USB_DEVICE_ID_SIZE);
         *isShared = dev->isShared;
         *isEnabled = dev->isEnabled;
         *opPending = dev->isOpPending;
@@ -175,6 +181,10 @@ SpiceUsbDevice* SpiceGlibGlue_GetNextUsbDevice(char* devName, char* devId,
         device = g_slist_next(device);
         return dev->device;
     }
+}
+
+int32_t SpiceGlibGlue_IsUsbInitialized() {
+    return usbWidget != NULL ? 1 : 0;
 }
 
 int32_t SpiceGlibGlue_isUsbDeviceListChanged() {
@@ -208,6 +218,10 @@ void SpiceGlibGlue_UnshareUsbDevice(SpiceUsbDevice* d) {
 
 void SpiceGlibGlue_GetUsbErrMsg(char* errMsg) {
 
+    if (!usbWidget) {
+        errMsg[0] = '\0';
+        return;
+    }
     spice_usb_device_widget_get_error_msg(usbWidget, errMsg);
 }
 
@@ -216,6 +230,215 @@ int32_t SpiceGlibGlue_isUsbErrMsgChanged() {
         g_error("Requested isUsbErrMsgChanged before initialization");
     }
     return spice_usb_device_widget_is_msg_changed(usbWidget);
+}
+
+/* Mobile platform file descriptor-based USB redirection implementation */
+
+static void set_usb_err_msg(char *errMsg, const char *msg)
+{
+    if (errMsg != NULL) {
+        g_strlcpy(errMsg, msg, MAX_USB_ERR_MSG_SIZE);
+    }
+}
+
+/* Resolves the manager for the current connection. `errMsg` and `conn_out` are optional. */
+static SpiceUsbDeviceManager *usb_device_manager(SpiceConnection **conn_out, char *errMsg)
+{
+    SpiceConnection *conn = global_connection();
+    if (conn == NULL) {
+        const char *msg = "No active SPICE connection";
+        g_warning("%s: %s", __func__, msg);
+        set_usb_err_msg(errMsg, msg);
+        return NULL;
+    }
+
+    SpiceSession *session = spice_connection_get_session(conn);
+    if (session == NULL || !SPICE_IS_SESSION(session)) {
+        const char *msg = "No SPICE session available";
+        g_warning("%s: %s", __func__, msg);
+        set_usb_err_msg(errMsg, msg);
+        return NULL;
+    }
+
+    GError *err = NULL;
+    SpiceUsbDeviceManager *manager = spice_usb_device_manager_get(session, &err);
+    if (manager == NULL || err != NULL) {
+        const char *msg = err ? err->message : "Failed to get USB device manager";
+        g_warning("%s: %s", __func__, msg);
+        set_usb_err_msg(errMsg, msg);
+        if (err != NULL) {
+            g_error_free(err);
+        }
+        return NULL;
+    }
+
+    if (conn_out != NULL) {
+        *conn_out = conn;
+    }
+    return manager;
+}
+
+typedef struct {
+    int32_t fileDescriptor;
+} ConnectFdCbData;
+
+static void report_fd_outcome(GError *err, ConnectFdCbData *data, const char *what)
+{
+    if (err != NULL) {
+        g_warning("USB: failed to %s device on file descriptor %d: %s",
+                  what, data->fileDescriptor, err->message);
+        g_error_free(err);
+    } else {
+        SPICE_DEBUG("USB: %s device on file descriptor %d", what, data->fileDescriptor);
+    }
+    g_free(data);
+}
+
+static void connect_fd_cb(GObject *gobject, GAsyncResult *res, gpointer user_data)
+{
+    GError *err = NULL;
+    spice_usb_device_manager_connect_device_finish(SPICE_USB_DEVICE_MANAGER(gobject), res, &err);
+    report_fd_outcome(err, user_data, "redirected");
+}
+
+static void disconnect_fd_cb(GObject *gobject, GAsyncResult *res, gpointer user_data)
+{
+    GError *err = NULL;
+    spice_usb_device_manager_disconnect_device_finish(SPICE_USB_DEVICE_MANAGER(gobject), res, &err);
+    report_fd_outcome(err, user_data, "gave back");
+}
+
+/* The caller owns the returned device. */
+static SpiceUsbDevice *allocate_device_for_fd(SpiceUsbDeviceManager *manager,
+                                              int32_t fileDescriptor, char *errMsg)
+{
+    GError *err = NULL;
+    SpiceUsbDevice *device = spice_usb_device_manager_allocate_device_for_file_descriptor(
+        manager, fileDescriptor, &err);
+
+    if (device == NULL || err != NULL) {
+        const char *msg = err ? err->message : "Failed to allocate USB device from file descriptor";
+        g_warning("%s: %s", __func__, msg);
+        set_usb_err_msg(errMsg, msg);
+        if (err != NULL) {
+            g_error_free(err);
+        }
+        return NULL;
+    }
+    return device;
+}
+
+SpiceUsbDevice* SpiceGlibGlue_AllocateUsbDeviceForFileDescriptor(int32_t fileDescriptor, char* errMsg)
+{
+    g_debug(" %s:%d:%s() fileDescriptor=%d", __FILE__, __LINE__, __func__, fileDescriptor);
+
+    SpiceUsbDeviceManager *manager = usb_device_manager(NULL, errMsg);
+    if (manager == NULL) {
+        return NULL;
+    }
+    return allocate_device_for_fd(manager, fileDescriptor, errMsg);
+}
+
+int32_t SpiceGlibGlue_AttachUsbDeviceByFileDescriptor(int32_t fileDescriptor, char* errMsg)
+{
+    g_debug(" %s:%d:%s() fileDescriptor=%d", __FILE__, __LINE__, __func__, fileDescriptor);
+
+    SpiceConnection *conn = NULL;
+    SpiceUsbDeviceManager *manager = usb_device_manager(&conn, errMsg);
+    if (manager == NULL) {
+        return 0;
+    }
+
+    SpiceUsbDevice *device = allocate_device_for_fd(manager, fileDescriptor, errMsg);
+    if (device == NULL) {
+        return 0;
+    }
+
+    ConnectFdCbData *cb_data = g_new(ConnectFdCbData, 1);
+    cb_data->fileDescriptor = fileDescriptor;
+    spice_usb_device_manager_connect_device_async(manager, device, NULL, connect_fd_cb, cb_data);
+
+    g_hash_table_insert(spice_connection_get_usb_devices(conn),
+                        GINT_TO_POINTER(fileDescriptor), device);
+    return 1;
+}
+
+int32_t SpiceGlibGlue_DetachUsbDeviceByFileDescriptor(int32_t fileDescriptor, char* errMsg)
+{
+    g_debug(" %s:%d:%s() fileDescriptor=%d", __FILE__, __LINE__, __func__, fileDescriptor);
+
+    SpiceConnection *conn = NULL;
+    SpiceUsbDeviceManager *manager = usb_device_manager(&conn, errMsg);
+    if (manager == NULL) {
+        return 0;
+    }
+
+    GHashTable *usbDevices = spice_connection_get_usb_devices(conn);
+    SpiceUsbDevice *device = g_hash_table_lookup(usbDevices, GINT_TO_POINTER(fileDescriptor));
+    if (device == NULL) {
+        const char *msg = "USB device not found for the given file descriptor";
+        g_warning("%s: %s (fd=%d)", __func__, msg, fileDescriptor);
+        set_usb_err_msg(errMsg, msg);
+        return 0;
+    }
+
+    if (spice_usb_device_manager_is_device_connected(manager, device)) {
+        ConnectFdCbData *cb_data = g_new(ConnectFdCbData, 1);
+        cb_data->fileDescriptor = fileDescriptor;
+        spice_usb_device_manager_disconnect_device_async(manager, device, NULL,
+                                                         disconnect_fd_cb, cb_data);
+    } else {
+        SPICE_DEBUG("USB: device on file descriptor %d was not redirected", fileDescriptor);
+    }
+
+    g_hash_table_remove(usbDevices, GINT_TO_POINTER(fileDescriptor));
+    return 1;
+}
+
+
+/* The widget holds a strong reference to the session, so nothing downstream of it is
+ * released until this runs: the USB device manager, its libusb context, and every open
+ * device handle. Devices must be disconnected while the manager is still alive. */
+void usb_glue_release_session(void)
+{
+    SpiceSession *session = NULL;
+
+    if (usbWidget != NULL) {
+        g_object_get(usbWidget, "session", &session, NULL);
+    } else {
+        SpiceConnection *conn = global_connection();
+        if (conn != NULL) {
+            session = spice_connection_get_session(conn);
+            if (session != NULL) {
+                g_object_ref(session);
+            }
+        }
+    }
+
+    if (session != NULL) {
+        GError *err = NULL;
+        SpiceUsbDeviceManager *manager = spice_usb_device_manager_get(session, &err);
+
+        if (manager != NULL && err == NULL) {
+            GPtrArray *device_list = spice_usb_device_manager_get_devices(manager);
+            if (device_list != NULL) {
+                for (guint i = 0; i < device_list->len; i++) {
+                    SpiceUsbDevice *dev = g_ptr_array_index(device_list, i);
+                    if (spice_usb_device_manager_is_device_connected(manager, dev)) {
+                        SPICE_DEBUG("USB: disconnecting device %d at session end", i);
+                        spice_usb_device_manager_disconnect_device(manager, dev);
+                    }
+                }
+                g_ptr_array_unref(device_list);
+            }
+        }
+        if (err != NULL) {
+            g_error_free(err);
+        }
+        g_object_unref(session);
+    }
+
+    g_clear_object(&usbWidget);
 }
 
 #endif

@@ -153,7 +153,7 @@ static GObject *spice_usb_device_widget_constructor(
     priv->manager = spice_usb_device_manager_get(priv->session, &err);
 
     if (err) {
-        g_warning(err->message);
+        g_warning("%s", err->message);
         g_clear_error(&err);
         return obj;
     }
@@ -195,8 +195,8 @@ static void spice_usb_device_widget_finalize(GObject *object)
     SpiceUsbDeviceWidgetPrivate *priv = self->priv;
     
     g_mutex_lock(&priv->deviceList_lock);
-    if (priv->deviceList) 
-        g_slist_free(priv->deviceList);
+    g_slist_free_full(priv->deviceList, g_free);
+    priv->deviceList = NULL;
     g_mutex_unlock(&priv->deviceList_lock);
     g_mutex_clear(&priv->deviceList_lock);
     
@@ -303,13 +303,7 @@ static void addErrorMessage(SpiceUsbDeviceWidget *self, char* newMessage) {
     g_mutex_unlock(&priv->err_msg_lock);
 }
 
-/* Checks that the device in the deviInfo can be redirected.
- * If one device is not redirectable:
- *  - Adds an error message
- *  - disables/enables the widget accordingly
- * widget: el check que contiene el property con el device.
- * user_data = self: el spice-usb-widget: (container)
-*/
+/* Records whether the device can be redirected, and the reason when it cannot. */
 static void check_can_redirect(SpiceUsbDeviceWidget *self, UsbDeviceInfo *devInfo)
 {
     SpiceUsbDeviceWidgetPrivate *priv = self->priv;
@@ -338,7 +332,8 @@ static void check_can_redirect(SpiceUsbDeviceWidget *self, UsbDeviceInfo *devInf
     }
 
     if (!can_redirect) {
-        addErrorMessage(self, err->message);
+        addErrorMessage(self, err != NULL ? err->message :
+                        "Device cannot be redirected");
     }
     
     g_clear_error(&err);
@@ -349,13 +344,14 @@ void spice_usb_device_widget_get_error_msg(SpiceUsbDeviceWidget* self,
         char* msg) {
 
     SpiceUsbDeviceWidgetPrivate *priv = self->priv;
-    if (priv->err_msg == NULL) return;
-    
+
     g_mutex_lock(&priv->err_msg_lock);
-    strncpy(msg, priv->err_msg, MAX_USB_ERR_MSG_SIZE);
-    g_free(priv->err_msg);
-    priv->err_msg = NULL;
-    priv->isMsgChanged = FALSE;
+    if (priv->err_msg != NULL) {
+        g_strlcpy(msg, priv->err_msg, MAX_USB_ERR_MSG_SIZE);
+        g_free(priv->err_msg);
+        priv->err_msg = NULL;
+        priv->isMsgChanged = FALSE;
+    }
     g_mutex_unlock(&priv->err_msg_lock);
 }
 
@@ -422,8 +418,6 @@ static void connect_cb(GObject *gobject, GAsyncResult *res, gpointer user_data)
 
     spice_usb_device_manager_connect_device_finish(manager, res, &err);
     device = data->device;
-    desc = spice_usb_device_get_description(device,
-                                                priv->device_full_format_string);
 
     if (err) {
         desc = spice_usb_device_get_description(device,
@@ -537,8 +531,8 @@ GSList *spice_usb_device_widget_get_devices(SpiceUsbDeviceWidget* self) {
     for (iterator = priv->deviceList; iterator; iterator = iterator->next) {
         UsbDeviceInfo *d = iterator->data;
         UsbDeviceInfo *devCopy = g_new (UsbDeviceInfo, 1);
-        strncpy(devCopy->name, d->name, MAX_USB_DEVICE_NAME_SIZE);
-        strncpy(devCopy->id, d->id, MAX_USB_DEVICE_ID_SIZE);
+        g_strlcpy(devCopy->name, d->name, MAX_USB_DEVICE_NAME_SIZE);
+        g_strlcpy(devCopy->id, d->id, MAX_USB_DEVICE_ID_SIZE);
         devCopy->isShared = d->isShared;
         devCopy->device = d->device;
         devCopy->isEnabled = d->isEnabled;
@@ -571,13 +565,13 @@ static void device_added_cb(SpiceUsbDeviceManager *manager,
     gchar *desc;
     desc = spice_usb_device_get_description(device,
                                             priv->device_name_format_string);
-    strncpy(deviceInfo->name, desc, MAX_USB_DEVICE_NAME_SIZE);
+    g_strlcpy(deviceInfo->name, desc, MAX_USB_DEVICE_NAME_SIZE);
     g_free(desc);
     
     gchar *id;
     id = spice_usb_device_get_description(device,
                                             priv->device_id_format_string);
-    strncpy(deviceInfo->id, id, MAX_USB_DEVICE_ID_SIZE);
+    g_strlcpy(deviceInfo->id, id, MAX_USB_DEVICE_ID_SIZE);
     g_free(id);
     
     gboolean shared= spice_usb_device_manager_is_device_connected(
@@ -612,14 +606,18 @@ static void device_added_cb(SpiceUsbDeviceManager *manager,
     
     g_mutex_lock(&priv->deviceList_lock);
 
-    for (iterator = priv->deviceList; iterator; iterator = iterator->next) {
+    /* The link is freed by the removal, so the successor has to be taken first. */
+    iterator = priv->deviceList;
+    while (iterator != NULL) {
+        GSList *next = iterator->next;
         UsbDeviceInfo* info = (UsbDeviceInfo*)iterator->data;
         SPICE_DEBUG("REMOVE: Comparing to %s: %s", info->name, info->id);
         if (info->device == device) {
-            priv->deviceList = g_slist_remove(priv->deviceList, info);
+            priv->deviceList = g_slist_delete_link(priv->deviceList, iterator);
             SPICE_DEBUG("REMOVE: gonna free %s: %s", info->name, info->id);
             g_free(info);
         }
+        iterator = next;
     }
     priv->isDeviceListChanged = TRUE;
     g_mutex_unlock(&priv->deviceList_lock);
@@ -639,14 +637,19 @@ static void device_error_cb(SpiceUsbDeviceManager *manager,
     gchar *full_desc;
     
     if (err) {
+        gchar *message;
+
         full_desc = spice_usb_device_get_description(device,
                                                 priv->device_full_format_string);
-        g_prefix_error(&err, "Error redirecting usb device %s ", full_desc);
+        /* The signal argument belongs to the emitter, which frees it when the emission
+         * ends. */
+        message = g_strdup_printf("Error redirecting usb device %s: %s",
+                                  full_desc, err->message);
         g_free(full_desc);
-        
-        g_warning(err->message);
-        addErrorMessage(self, err->message);
-        g_error_free(err);
+
+        g_warning("%s", message);
+        addErrorMessage(self, message);
+        g_free(message);
     } else {
         g_warning("Device_error. No additional data available.");
         addErrorMessage(self, "Device_error. No additional data available.");

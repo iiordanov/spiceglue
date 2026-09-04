@@ -183,6 +183,12 @@ SpiceDisplay* global_display() {
     return mainconn != NULL ? spice_connection_get_display(mainconn) : NULL;
 }
 
+#ifdef USBREDIR
+SpiceConnection* global_connection() {
+    return mainconn;
+}
+#endif
+
 void SpiceGlibGlue_MainLoop(void)
 {
     GMainLoop *mainloop = g_main_loop_new(NULL, FALSE);
