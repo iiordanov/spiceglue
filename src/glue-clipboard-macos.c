@@ -75,18 +75,18 @@ push_clipboard_data (const guchar *data, guint size)
   g_mutex_lock (&data_mutex);
   SPICE_DEBUG("CB: data_mutex locked in push.\n");
 
-  if (size > CB_SIZE) {
-      size = CB_SIZE;
+  if (size >= CB_SIZE) {
+      size = CB_SIZE - 1;
   }
 
   if (guestClipboard != NULL) {
-      snprintf((char *) guestClipboard, size, "%s", data);
+      memcpy(guestClipboard, data, size);
+      ((char *) guestClipboard)[size] = '\0';
   }
 
   pendingGuestData = 1;
 
   g_mutex_unlock (&data_mutex);
-  SPICE_DEBUG("CB: guestClipboard contains \"%s\"\n", guestClipboard); 
   SPICE_DEBUG("CB: data_mutex UNlocked in push.\n");
 }
 
@@ -241,11 +241,7 @@ gboolean clipboard_requestFromGuest(SpiceMainChannel *main, guint selection,
 
     //TODO check values as spice-gtk-session.
     gchar *data = (gchar *) hostClipboard;
-    SPICE_DEBUG("CB: hostClipboard 0x%x\n", hostClipboard);
-
-    if (hostClipboard != NULL) {
-        SPICE_DEBUG("CB: hostClipboard contains %s\n", hostClipboard);
-    }
+    SPICE_DEBUG("CB: hostClipboard %p\n", (void *) hostClipboard);
 
     if (data == NULL ) {
         SPICE_DEBUG("CB: No supported Clipboard format available\n");
@@ -263,6 +259,9 @@ gboolean clipboard_requestFromGuest(SpiceMainChannel *main, guint selection,
         SPICE_DEBUG("CB: Host to Guest, changing line ending\n");
         len = strnlen(data, CB_SIZE);
         conv = spice_unix2dos((gchar*)data, len);
+        if (conv == NULL) {
+            return FALSE;
+        }
         SPICE_DEBUG("CB: Host to Guest, changing line ending: OK\n");
         len = strnlen(conv, CB_SIZE);
     } else {
@@ -273,7 +272,6 @@ gboolean clipboard_requestFromGuest(SpiceMainChannel *main, guint selection,
             VD_AGENT_CLIPBOARD_SELECTION_CLIPBOARD, 
             VD_AGENT_CLIPBOARD_UTF8_TEXT,
             conv ? conv : data, len);
-onError:
     g_free(conv);
     return FALSE;
 }
@@ -293,14 +291,15 @@ void clipboard_got_from_guest(SpiceMainChannel *main, guint selection,
         return;
     }
     
-    if (type == VD_AGENT_CLIPBOARD_UTF8_TEXT) {
-        push_clipboard_data (data, size + 1);
-    } else {
+    if (type != VD_AGENT_CLIPBOARD_UTF8_TEXT) {
         g_warning("CB: Ignoring clipboard of unexpected type %d from guest", type);
+        return;
     }
 
+    push_clipboard_data (data, size);
+
     if (clientClipboardCallback != NULL) {
-        clientClipboardCallback(guestClipboard);
+        clientClipboardCallback((char *) guestClipboard);
     }
 }
 
@@ -340,6 +339,7 @@ gboolean clipboard_releaseByGuest(SpiceMainChannel *main, guint selection,
 
     SPICE_DEBUG("CB: clipboard_releaseByGuest(sel %d) not implemented in this platform", selection);
 
+    return TRUE;
 }
 
 gboolean SpiceGlibGlue_InitClipboard(
@@ -355,18 +355,16 @@ gboolean SpiceGlibGlue_InitClipboard(
     guestClipboard = guestClipboardP;
     hostClipboard = hostClipboardP;
     clientClipboardCallback = clientClipboardCallbackP;
-    SPICE_DEBUG("CB: guestClipboard 0x%x\n", guestClipboard);
-    SPICE_DEBUG("CB: hostClipboard 0x%x\n", hostClipboard);
+    SPICE_DEBUG("CB: guestClipboard %p\n", (void *) guestClipboard);
+    SPICE_DEBUG("CB: hostClipboard %p\n", (void *) hostClipboard);
     
     return FALSE;    
 }
 
 void spice_clipboard_selection_grab(SpiceMainChannel *channel, char *text, int size) {
     int writeSize = MIN(size, CB_SIZE - 1);
-    SPICE_DEBUG("CB: spice_clipboard_selection_grab text: %s", text);
     SPICE_DEBUG("CB: spice_clipboard_selection_grab writeSize: %d", writeSize);
-    snprintf((char *) hostClipboard, writeSize+1, "%s\0", text);
-    SPICE_DEBUG("CB: spice_clipboard_selection_grab hostClipboard: %s", hostClipboard);
+    snprintf((char *) hostClipboard, writeSize + 1, "%s", text);
     guint32 clipboard_types[] = { VD_AGENT_CLIPBOARD_UTF8_TEXT };
     spice_main_channel_clipboard_selection_grab(
             channel,
@@ -376,18 +374,34 @@ void spice_clipboard_selection_grab(SpiceMainChannel *channel, char *text, int s
     );
 }
 
-gboolean SpiceGlibGlue_ClientCutText(char *hostClipboardContents, int size) {
-    if (hostClipboard == NULL) {
-        return FALSE;
+struct client_cut_text {
+    char *contents;
+    int size;
+};
+
+static gboolean client_cut_text(gpointer data)
+{
+    struct client_cut_text *cut = data;
+    SpiceDisplay *display = global_display();
+    SpiceDisplayPrivate *d = display != NULL ? SPICE_DISPLAY_GET_PRIVATE(display) : NULL;
+
+    if (d != NULL && d->main != NULL) {
+        spice_clipboard_selection_grab(d->main, cut->contents, cut->size);
     }
-    SpiceDisplay *display;
-    display = global_display();
-    SpiceDisplayPrivate *d;
-    d = SPICE_DISPLAY_GET_PRIVATE(display);
-    if (d == NULL || d->main == NULL) {
+    g_free(cut->contents);
+    g_free(cut);
+    return G_SOURCE_REMOVE;
+}
+
+gboolean SpiceGlibGlue_ClientCutText(char *hostClipboardContents, int size) {
+    if (hostClipboard == NULL || hostClipboardContents == NULL || size <= 0) {
         return FALSE;
     }
 
-    spice_clipboard_selection_grab(d->main, hostClipboardContents, size);
+    struct client_cut_text *cut = g_new0(struct client_cut_text, 1);
+    cut->contents = g_malloc0(size + 1);
+    memcpy(cut->contents, hostClipboardContents, size);
+    cut->size = size;
+    g_idle_add(client_cut_text, cut);
     return TRUE;
 }

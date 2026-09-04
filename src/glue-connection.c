@@ -194,6 +194,22 @@ void spice_connection_connect(SpiceConnection *conn)
 {
     conn->disconnecting = FALSE;
     SPICE_DEBUG("Connect Spice connection %p", conn);
+#if defined(__APPLE__) && TARGET_OS_MACCATALYST
+    /* Auto-connect must be off before any channel opens; a device it grabs cannot then be
+     * shared by hand. */
+    {
+        GError *usb_err = NULL;
+        SpiceUsbDeviceManager *usb_mgr = spice_usb_device_manager_get(conn->session, &usb_err);
+        if (usb_mgr != NULL && usb_err == NULL) {
+            g_object_set(usb_mgr,
+                         "auto-connect", FALSE,
+                         "auto-connect-filter", "-1,-1,-1,-1,0",
+                         NULL);
+            g_message("macCatalyst: Disabled USB auto-connect at connection start");
+        }
+        if (usb_err != NULL) g_error_free(usb_err);
+    }
+#endif
     spice_session_connect(conn->session);
 }
 
@@ -397,3 +413,10 @@ void spice_connection_set_cursor_shape_updated_callback(SpiceConnection *conn,
     SPICE_DEBUG("spice_connection_set_cursor_shape_updated_callback");
     conn->cursor_shape_updated_callback = cursor_shape_updated_callback;
 }
+
+#ifdef USBREDIR
+SpiceSession *spice_connection_get_session(SpiceConnection *conn)
+{
+    return conn->session;
+}
+#endif

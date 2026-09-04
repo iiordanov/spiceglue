@@ -23,7 +23,6 @@
 #include <glib/gi18n.h>
 #include "spice-client.h"
 #include "usb-device-widget.h"
-#include <spice-gtk/spice-util-priv.h>
 
 /**
  * SECTION:usb-device-widget

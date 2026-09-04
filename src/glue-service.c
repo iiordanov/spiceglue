@@ -235,7 +235,7 @@ int16_t SpiceGlibGlue_Connect(char* host,
 
     spice_connection_connect(mainconn);
 #if defined(USBREDIR)
-	usb_glue_register_session(mainconn->session);
+	usb_glue_register_session(spice_connection_get_session(mainconn));
 #endif
     SPICE_DEBUG("SpiceClientConnect exit");
 

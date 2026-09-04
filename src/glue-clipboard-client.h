@@ -37,5 +37,6 @@ gboolean SpiceGlibGlue_ClientCutText(char *hostClipboardContents, int size);
 int SpiceGlibGlue_ReleaseGuestClipboard(void);
 int SpiceGlibGlue_ClipboardGetData(void);
 
+
 #endif /* _GLUE_CLIPBOARD_CLIENT_H */
 #endif
